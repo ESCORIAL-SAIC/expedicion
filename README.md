@@ -153,3 +153,5 @@ desde la rama base, asi que `main-action.yml` tiene que existir en `main` para q
   (`testDebugUnitTest`), ambos con SDK/build-tools/JDK reales instalados en la maquina.
 - No hay tests de UI (Compose) ni instrumentados; el alcance de testing automatizado de este
   ciclo es a nivel ViewModel, como pide la especificacion.
+
+<!-- Pipeline de release verificado end-to-end el 2026-09-03. -->

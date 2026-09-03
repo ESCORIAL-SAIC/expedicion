@@ -121,6 +121,30 @@ app/src/main/java/com/expedicion/app/
   replicando fielmente `UnitDevolucion.pas` (el bloque de validacion esta comentado en el
   original y ni siquiera revisa el resultado).
 
+## Release (CI/CD)
+
+El versionado y la publicacion son automaticos: **no editar `versionName`/`versionCode` a mano**,
+los maneja el CI (`.github/workflows/`).
+
+- **PR a `dev`** → prerelease `X.Y.Z-dev`: APK firmado, GitHub Release (`prerelease: true`) y
+  publicacion en F-Droid. No toca la version recomendada del catalogo.
+- **PR `dev` → `main`** → release estable `X.Y.Z`: idem, mas tag y `CurrentVersion*` en F-Droid.
+  Solo corre si el PR viene de `dev` (un hotfix directo a main no dispara release).
+- **El bump lo decide el label del PR**: `breaking` → MAJOR, `feature` → MINOR, `bugfix` o sin
+  label → PATCH.
+- `build-number.txt` (solo en `main`) es el contador global de builds; ambos pipelines lo
+  incrementan ahi. Si falta, los workflows abortan a proposito.
+- Publica en `ESCORIAL-SAIC/fdroidrepo` como `com.escorial.expedicion`. La app Delphi legacy
+  sigue publicada aparte como `com.embarcadero.Expedicion` ("Expedicion (legacy)").
+
+**Al mergear `dev` → `main` hay conflicto en `versionName`** (main tiene `X.Y.Z`, dev tiene
+`X.Y.Z-dev`): resolver **siempre eligiendo la version de dev**; el pipeline de main la
+re-promueve solo.
+
+Los tres workflows viven en **ambas ramas**: GitHub resuelve los workflows de un `pull_request`
+desde la rama base, asi que `main-action.yml` tiene que existir en `main` para que el PR
+`dev → main` dispare el release.
+
 ## Limitaciones conocidas
 
 - No se pudo verificar en este entorno la ejecucion contra un emulador/dispositivo real

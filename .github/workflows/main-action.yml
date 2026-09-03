@@ -1,0 +1,258 @@
+name: Release Android APK on Main Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+concurrency:
+  group: release-pipeline
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Signed Android APK and Release
+    if: github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'dev'
+    runs-on: windows-latest
+
+    outputs:
+      version: ${{ steps.versioning.outputs.version }}
+      versionCode: ${{ steps.versioning.outputs.versionCode }}
+
+    env:
+      ANDROID_HOME: C:\Android\Sdk
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Decode keystore from base64
+        shell: pwsh
+        run: |
+          $keystorePath = Join-Path $PWD "app/my-release-key.keystore"
+          [System.IO.File]::WriteAllBytes($keystorePath, [Convert]::FromBase64String("${{ secrets.ORG_ANDROID_KEYSTORE_BASE64 }}"))
+          Write-Host "✅ Keystore generado en: $keystorePath"
+
+      - name: Ensure Gradle can find keystore
+        shell: pwsh
+        run: |
+          # OJO: '8.11.1' es sólo una carpeta temporal donde dejamos el keystore; el path
+          # exacto que usa el build es el que se pasa en -Pandroid.injected.signing.store.file
+          # más abajo. Si cambian la versión de Gradle, mantené ambos strings iguales.
+          $gradleKeystoreDir = "C:\Users\runneradmin\.gradle\daemon\8.11.1"
+          New-Item -ItemType Directory -Force -Path $gradleKeystoreDir | Out-Null
+          Copy-Item "app/my-release-key.keystore" "$gradleKeystoreDir\my-release-key.keystore" -Force
+          Write-Host "✅ Copiado keystore a $gradleKeystoreDir"
+
+      - name: Increment build number
+        id: buildnum
+        shell: pwsh
+        run: |
+          git fetch origin main
+          git checkout main
+
+          $file = "build-number.txt"
+          $maxAttempts = 5
+          $pushed = $false
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            # Re-leer siempre el último valor de main para no reutilizar un número ya consumido
+            git fetch origin main
+            git reset --hard origin/main
+
+            if (-not (Test-Path $file)) {
+              Write-Error "❌ No existe build-number.txt en main. Es el contador único de builds y debe existir; abortando."
+              exit 1
+            }
+
+            $number = [int](Get-Content $file) + 1
+            Set-Content $file $number
+
+            git add $file
+            git commit -m "chore: bump build number to $number"
+            git push origin main
+
+            if ($LASTEXITCODE -eq 0) {
+              $pushed = $true
+              echo "BUILD_NUMBER=$number" >> $env:GITHUB_ENV
+              echo "BUILD_NUMBER=$number" >> $env:GITHUB_OUTPUT
+              Write-Host "✅ Build number actualizado a $number"
+              break
+            }
+
+            Write-Host "⚠️ Push a main rechazado (intento $attempt), re-sincronizando y reintentando..."
+          }
+
+          if (-not $pushed) {
+            Write-Error "❌ No se pudo actualizar el build number en main tras $maxAttempts intentos"
+            exit 1
+          }
+
+      - name: Set stable version in Gradle (KTS)
+        id: versioning
+        shell: pwsh
+        run: |
+          # Al llegar a este step ya estamos en main (con el bump del build number)
+          $gradleFile = "app/build.gradle.kts"
+          $content = Get-Content $gradleFile -Raw
+
+          if ($content -match 'versionName\s*=\s*"([^"]+)"') {
+            $versionName = $matches[1]
+          } else {
+            Write-Error "❌ No se pudo leer versionName de $gradleFile"
+            exit 1
+          }
+
+          # Promover a versión estable: quitar el sufijo -dev (X.Y.Z-dev -> X.Y.Z)
+          $stableVersion = $versionName -replace '-dev',''
+          # Validar formato esperado X.Y.Z antes de parsear
+          if ($stableVersion -notmatch '^\d+\.\d+\.\d+$') {
+            Write-Error "❌ versionName '$versionName' no tiene el formato esperado X.Y.Z[-dev]"
+            exit 1
+          }
+          $parts = $stableVersion -split '\.'
+          $major = [int]$parts[0]
+          $minor = [int]$parts[1]
+          $patch = [int]$parts[2]
+
+          $runNumber = [int]$env:BUILD_NUMBER
+          $newVersionCode = $runNumber + ($major * 10000) + ($minor * 100) + $patch
+
+          # Fail-fast: no sobrescribir un release ya publicado (chequeo temprano, antes de compilar)
+          git fetch --tags origin
+          if (git tag -l $stableVersion) {
+            Write-Error "❌ El tag $stableVersion ya existe. Abortando para no sobrescribir un release estable."
+            exit 1
+          }
+
+          $content = $content -replace 'versionName\s*=\s*".*"', "versionName = `"$stableVersion`""
+          $content = $content -replace 'versionCode\s*=\s*\d+', "versionCode = $newVersionCode"
+          Set-Content $gradleFile $content -Encoding utf8
+
+          Write-Host "Run number: $runNumber"
+          Write-Host "Stable versionName: $stableVersion"
+          Write-Host "VersionCode: $newVersionCode"
+
+          echo "version=$stableVersion" >> $env:GITHUB_ENV
+          echo "versionCode=$newVersionCode" >> $env:GITHUB_ENV
+          # Exponer como outputs del job para pasarlos al workflow de F-Droid
+          echo "version=$stableVersion" >> $env:GITHUB_OUTPUT
+          echo "versionCode=$newVersionCode" >> $env:GITHUB_OUTPUT
+
+      - name: Build release APK
+        shell: pwsh
+        run: |
+          $keystorePath = "C:\Users\runneradmin\.gradle\daemon\8.11.1\my-release-key.keystore"
+
+          $signingArgs = @(
+              "-Pandroid.injected.signing.store.file=$keystorePath",
+              # El keystore de la org es formato JKS; AGP 9 asume PKCS12 por default (JDK 9+)
+              # y falla con "Tag number over 30". Forzar el tipo para que lo lea como JKS.
+              "-Pandroid.injected.signing.store.type=jks",
+              "-Pandroid.injected.signing.store.password=${{ secrets.ORG_ANDROID_KEYSTORE_PASSWORD }}",
+              "-Pandroid.injected.signing.key.alias=${{ secrets.ORG_ANDROID_KEY_ALIAS }}",
+              "-Pandroid.injected.signing.key.password=${{ secrets.ORG_ANDROID_KEY_PASSWORD }}"
+          )
+
+          ./gradlew.bat assembleRelease @signingArgs
+
+          $apkPath = Get-ChildItem "app/build/outputs/apk/release" -Filter *.apk | Select-Object -First 1
+          if (-not $apkPath) {
+            Write-Error "❌ No se generó el APK de release"
+            exit 1
+          }
+
+          $newApkName = "com.escorial.expedicion-${{ env.version }}-${{ env.versionCode }}.apk"
+          $newApkPath = Join-Path $PWD $newApkName
+          Copy-Item $apkPath.FullName $newApkPath
+
+          echo "apk_path=$newApkPath" >> $env:GITHUB_ENV
+          Write-Host "✅ APK generado en: $newApkPath"
+
+      - name: Commit stable version and tag
+        shell: pwsh
+        run: |
+          # Se hace DESPUÉS de compilar y verificar el APK: si el build falla, no queda
+          # el commit de versión estable ni el tag pusheados sin release asociado (evita
+          # tags colgantes y el bloqueo permanente del re-run por el guard de tag existente).
+          #
+          # NOTA (H2): este commit-back de la versión estable a main provoca que, en el
+          # próximo PR dev -> main, haya conflicto de merge en versionName/versionCode
+          # (main tiene X.Y.Z sin -dev; dev tiene X.Y.Z-dev). Al resolver ese PR se debe
+          # elegir SIEMPRE la versión de dev (X.Y.Z-dev); este workflow la re-promueve.
+          $gradleFile = "app/build.gradle.kts"
+          $stableVersion = "${{ env.version }}"
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add $gradleFile
+          git commit -m "chore: release version $stableVersion"
+
+          $pushed = $false
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            git push origin HEAD:main
+            if ($LASTEXITCODE -eq 0) { $pushed = $true; break }
+            Write-Host "⚠️ Push de versión estable rechazado (intento $attempt), re-basando..."
+            git fetch origin main
+            git rebase origin/main
+          }
+          if (-not $pushed) {
+            Write-Error "❌ No se pudo pushear la versión estable a main tras varios intentos"
+            exit 1
+          }
+
+          git tag $stableVersion
+          $tagPushed = $false
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            git push origin $stableVersion
+            if ($LASTEXITCODE -eq 0) { $tagPushed = $true; break }
+            Write-Host "⚠️ Push del tag rechazado (intento $attempt), reintentando..."
+            git fetch origin
+          }
+          if (-not $tagPushed) {
+            Write-Error "❌ No se pudo pushear el tag $stableVersion tras varios intentos"
+            exit 1
+          }
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.version }}
+          name: Expedicion - ${{ env.version }}
+          body: ${{ env.version }}
+          files: ${{ env.apk_path }}
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: ${{ env.apk_path }}
+          retention-days: 1
+
+  fdroid-publish:
+    needs: build
+    if: success()
+    uses: ./.github/workflows/fdroid-publish.yml
+    with:
+      # Solo el pipeline de main (release estable) fija la versión recomendada.
+      current_version_code: ${{ needs.build.outputs.versionCode }}
+      current_version: ${{ needs.build.outputs.version }}
+    secrets: inherit

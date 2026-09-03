@@ -1,0 +1,141 @@
+name: Publicar en F-Droid Repo
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: Nombre del artifact con el APK a publicar
+        type: string
+        required: false
+        default: android-apk
+      current_version_code:
+        description: Si se pasa (solo releases estables de main), fija CurrentVersionCode (versión recomendada) en el metadata
+        type: string
+        required: false
+        default: ''
+      current_version:
+        description: Si se pasa, fija CurrentVersion (nombre de versión) en el metadata
+        type: string
+        required: false
+        default: ''
+
+concurrency:
+  group: fdroid-publish
+  cancel-in-progress: false
+
+jobs:
+  fdroid-publish:
+    name: Publicar en F-Droid Repo
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del repositorio principal
+        uses: actions/checkout@v4
+
+      - name: Descargar el APK de la compilación anterior
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ./downloaded-apk
+
+      - name: Checkout del repositorio de F-Droid
+        uses: actions/checkout@v4
+        with:
+          repository: ESCORIAL-SAIC/fdroidrepo
+          token: ${{ secrets.ORG_FDROID_REPO_TOKEN }}
+          path: fdroid-repo
+
+      - name: Instalar fdroidserver (versión pineada)
+        run: |
+          # Versiones pineadas de las herramientas de F-Droid.
+          # Ajustar acá si hace falta actualizar (NO usar --upgrade/latest).
+          FDROIDSERVER_VERSION="2.3.1"
+          ANDROGUARD_VERSION="4.1.2"
+          sudo apt-get update
+          sudo apt-get install python3-pip python3-venv -y
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install "fdroidserver==${FDROIDSERVER_VERSION}" "androguard==${ANDROGUARD_VERSION}"
+          fdroid --version
+
+      - name: Verificar versión instalada
+        run: |
+          source .venv/bin/activate
+          fdroid --version
+
+      - name: Importar APK y actualizar el repo
+        working-directory: fdroid-repo
+        run: |
+          source ../.venv/bin/activate
+
+          DOWNLOADED_APK_PATH=$(ls ../downloaded-apk/*.apk)
+          if [ -z "$DOWNLOADED_APK_PATH" ]; then
+            echo "❌ No se encontró ningún APK en el artifact '${{ inputs.artifact_name }}'"
+            exit 1
+          fi
+
+          echo "✅ APK encontrado: $DOWNLOADED_APK_PATH"
+          cp "$DOWNLOADED_APK_PATH" ./repo/
+
+          sudo apt-get install -y apksigner
+          # OJO (H3): debe ser sintaxis YAML (clave: valor), NO 'apksigner = ...' (Python),
+          # o fdroidserver 2.3.1 rompe al parsear config.yml. Append idempotente.
+          grep -q '^apksigner:' config.yml || echo "apksigner: /usr/bin/apksigner" >> config.yml
+
+          printf '%s' "${{ secrets.ORG_ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > my-release-key.keystore
+
+          # Fijar la versión recomendada SOLO cuando el caller la pasa (pipeline de main =
+          # release estable). dev no la pasa, así que el prerelease no toca este puntero.
+          # Debe hacerse ANTES de 'fdroid update' para que el índice regenerado la refleje.
+          CURRENT_VERSION_CODE="${{ inputs.current_version_code }}"
+          CURRENT_VERSION="${{ inputs.current_version }}"
+          META="metadata/com.escorial.expedicion.yml"
+          if [ -n "$CURRENT_VERSION_CODE" ] && [ -f "$META" ]; then
+            if grep -q '^CurrentVersionCode:' "$META"; then
+              sed -i "s/^CurrentVersionCode:.*/CurrentVersionCode: ${CURRENT_VERSION_CODE}/" "$META"
+            else
+              echo "CurrentVersionCode: ${CURRENT_VERSION_CODE}" >> "$META"
+            fi
+            if [ -n "$CURRENT_VERSION" ]; then
+              if grep -q '^CurrentVersion:' "$META"; then
+                sed -i "s/^CurrentVersion:.*/CurrentVersion: '${CURRENT_VERSION}'/" "$META"
+              else
+                echo "CurrentVersion: '${CURRENT_VERSION}'" >> "$META"
+              fi
+            fi
+            echo "✅ Versión recomendada fijada en metadata: CurrentVersionCode=${CURRENT_VERSION_CODE} CurrentVersion=${CURRENT_VERSION}"
+          else
+            echo "ℹ️ Sin cambio de versión recomendada (no se pasó current_version_code; ej. publicación desde dev)"
+          fi
+
+          fdroid update -c
+
+      - name: Commit y push de cambios
+        working-directory: fdroid-repo
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add .
+
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "ℹ️ Sin cambios en el repo F-Droid, no hay nada que commitear"
+            exit 0
+          fi
+
+          git commit -m "chore: Actualizar repositorio F-Droid con nueva versión Android"
+
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "✅ Push exitoso"
+              exit 0
+            fi
+            echo "⚠️ Push rechazado (intento $attempt), sincronizando y reintentando..."
+            git fetch origin
+            git pull --rebase
+          done
+
+          echo "❌ No se pudo pushear al repo F-Droid tras varios reintentos"
+          exit 1
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_FDROID_REPO_TOKEN }}

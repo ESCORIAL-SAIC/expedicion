@@ -1,0 +1,261 @@
+name: Prerelease Android APK on Dev Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - dev
+
+concurrency:
+  group: release-pipeline
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Signed Android APK and Prerelease
+    if: github.event.pull_request.merged == true
+    runs-on: windows-latest
+
+    env:
+      ANDROID_HOME: C:\Android\Sdk
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Decode keystore from base64
+        shell: pwsh
+        run: |
+          $keystorePath = Join-Path $PWD "app/my-release-key.keystore"
+          [System.IO.File]::WriteAllBytes($keystorePath, [Convert]::FromBase64String("${{ secrets.ORG_ANDROID_KEYSTORE_BASE64 }}"))
+          Write-Host "✅ Keystore generado en: $keystorePath"
+
+      - name: Ensure Gradle can find keystore
+        shell: pwsh
+        run: |
+          # OJO: '8.11.1' es sólo una carpeta temporal donde dejamos el keystore; el path
+          # exacto que usa el build es el que se pasa en -Pandroid.injected.signing.store.file
+          # más abajo. Si cambian la versión de Gradle, mantené ambos strings iguales.
+          $gradleKeystoreDir = "C:\Users\runneradmin\.gradle\daemon\8.11.1"
+          New-Item -ItemType Directory -Force -Path $gradleKeystoreDir | Out-Null
+          Copy-Item "app/my-release-key.keystore" "$gradleKeystoreDir\my-release-key.keystore" -Force
+          Write-Host "✅ Copiado keystore a $gradleKeystoreDir"
+
+
+      - name: Detect PR labels
+        id: labels
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            const labels = pr.labels.map(l => l.name.toLowerCase());
+            let releaseType = "bugfix";
+            if (labels.includes("breaking")) releaseType = "breaking";
+            else if (labels.includes("feature")) releaseType = "feature";
+            else if (labels.includes("bugfix")) releaseType = "bugfix";
+            core.exportVariable("RELEASE_TYPE", releaseType);
+
+      - name: Increment build number
+        id: buildnum
+        shell: pwsh
+        run: |
+          git fetch origin main
+          git checkout main
+
+          $file = "build-number.txt"
+          $maxAttempts = 5
+          $pushed = $false
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            # Re-leer siempre el último valor de main para no reutilizar un número ya consumido
+            git fetch origin main
+            git reset --hard origin/main
+
+            if (-not (Test-Path $file)) {
+              Write-Error "❌ No existe build-number.txt en main. Es el contador único de builds y debe existir; abortando."
+              exit 1
+            }
+
+            $number = [int](Get-Content $file) + 1
+            Set-Content $file $number
+
+            git add $file
+            git commit -m "chore: bump build number to $number"
+            git push origin main
+
+            if ($LASTEXITCODE -eq 0) {
+              $pushed = $true
+              echo "BUILD_NUMBER=$number" >> $env:GITHUB_ENV
+              echo "BUILD_NUMBER=$number" >> $env:GITHUB_OUTPUT
+              Write-Host "✅ Build number actualizado a $number"
+              break
+            }
+
+            Write-Host "⚠️ Push a main rechazado (intento $attempt), re-sincronizando y reintentando..."
+          }
+
+          if (-not $pushed) {
+            Write-Error "❌ No se pudo actualizar el build number en main tras $maxAttempts intentos"
+            exit 1
+          }
+
+          git fetch origin dev
+          git checkout dev
+
+      - name: Set version in Gradle (KTS)
+        id: versioning
+        shell: pwsh
+        run: |
+          $gradleFile = "app/build.gradle.kts"
+          $content = Get-Content $gradleFile -Raw
+
+          # Detect current versionName and versionCode
+          if ($content -match 'versionName\s*=\s*"([^"]+)"') {
+            $versionName = $matches[1]
+          } else {
+            Write-Error "❌ No se pudo leer versionName de $gradleFile"
+            exit 1
+          }
+
+          $releaseType = $env:RELEASE_TYPE
+          if (-not $releaseType) { $releaseType = "bugfix" }
+
+          # Validar formato esperado X.Y.Z[-dev] antes de parsear
+          $base = $versionName -replace '-dev',''
+          if ($base -notmatch '^\d+\.\d+\.\d+$') {
+            Write-Error "❌ versionName '$versionName' no tiene el formato esperado X.Y.Z[-dev]"
+            exit 1
+          }
+
+          $parts = $base -split '\.'
+          $major = [int]$parts[0]
+          $minor = [int]$parts[1]
+          $patch = [int]$parts[2]
+
+          switch ($releaseType) {
+              "bugfix"   { $patch += 1 }
+              "feature"  { $minor += 1; $patch = 0 }
+              "breaking" { $major += 1; $minor = 0; $patch = 0 }
+          }
+
+          $newVersionName = "$major.$minor.$patch-dev"
+          $runNumber = [int]$env:BUILD_NUMBER
+          $newVersionCode = $runNumber + ($major * 10000) + ($minor * 100) + $patch
+
+          # Reemplazo en formato Kotlin Script (usa "=" en vez de espacio)
+          $content = $content -replace 'versionName\s*=\s*".*"', "versionName = `"$newVersionName`""
+          $content = $content -replace 'versionCode\s*=\s*\d+', "versionCode = $newVersionCode"
+          Set-Content $gradleFile $content -Encoding utf8
+
+          Write-Host "Run number: $runNumber"
+          Write-Host "New versionName: $newVersionName"
+          Write-Host "VersionCode: $newVersionCode"
+
+          echo "version=$newVersionName" >> $env:GITHUB_ENV
+          echo "versionCode=$newVersionCode" >> $env:GITHUB_ENV
+
+      - name: Build release APK
+        shell: pwsh
+        run: |
+          $keystorePath = "C:\Users\runneradmin\.gradle\daemon\8.11.1\my-release-key.keystore"
+
+          $signingArgs = @(
+              "-Pandroid.injected.signing.store.file=$keystorePath",
+              # El keystore de la org es formato JKS; AGP 9 asume PKCS12 por default (JDK 9+)
+              # y falla con "Tag number over 30". Forzar el tipo para que lo lea como JKS.
+              "-Pandroid.injected.signing.store.type=jks",
+              "-Pandroid.injected.signing.store.password=${{ secrets.ORG_ANDROID_KEYSTORE_PASSWORD }}",
+              "-Pandroid.injected.signing.key.alias=${{ secrets.ORG_ANDROID_KEY_ALIAS }}",
+              "-Pandroid.injected.signing.key.password=${{ secrets.ORG_ANDROID_KEY_PASSWORD }}"
+          )
+
+          ./gradlew.bat assembleRelease @signingArgs
+
+          $apkPath = Get-ChildItem "app/build/outputs/apk/release" -Filter *.apk | Select-Object -First 1
+          if (-not $apkPath) {
+            Write-Error "❌ No se generó el APK de release"
+            exit 1
+          }
+
+          $newApkName = "com.escorial.expedicion-${{ env.version }}-${{ env.versionCode }}.apk"
+          $newApkPath = Join-Path $PWD $newApkName
+          Copy-Item $apkPath.FullName $newApkPath
+
+          echo "apk_path=$newApkPath" >> $env:GITHUB_ENV
+          Write-Host "✅ APK generado en: $newApkPath"
+
+      - name: Commit and tag version
+        shell: pwsh
+        run: |
+          # Se hace DESPUÉS de compilar y verificar el APK: así, si el build falla,
+          # no queda un commit/tag de versión pusheado sin release asociado.
+          $gradleFile = "app/build.gradle.kts"
+          $newVersionName = "${{ env.version }}"
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add $gradleFile
+          git commit -m "chore: bump version $newVersionName"
+
+          $pushed = $false
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            git push origin HEAD
+            if ($LASTEXITCODE -eq 0) { $pushed = $true; break }
+            Write-Host "⚠️ Push de versión rechazado (intento $attempt), re-basando..."
+            git fetch origin dev
+            git rebase origin/dev
+          }
+          if (-not $pushed) {
+            Write-Error "❌ No se pudo pushear el commit de versión a dev tras varios intentos"
+            exit 1
+          }
+
+          git tag $newVersionName
+          $tagPushed = $false
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            git push origin $newVersionName
+            if ($LASTEXITCODE -eq 0) { $tagPushed = $true; break }
+            Write-Host "⚠️ Push del tag rechazado (intento $attempt), reintentando..."
+            git fetch origin
+          }
+          if (-not $tagPushed) {
+            Write-Error "❌ No se pudo pushear el tag $newVersionName tras varios intentos"
+            exit 1
+          }
+
+      - name: Create GitHub Prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.version }}
+          name: Expedicion (pre-release) - ${{ env.version }}
+          body: ${{ env.version }}
+          files: ${{ env.apk_path }}
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: ${{ env.apk_path }}
+          retention-days: 1
+
+  fdroid-publish:
+    needs: build
+    if: success() && github.event.pull_request.merged == true
+    uses: ./.github/workflows/fdroid-publish.yml
+    secrets: inherit

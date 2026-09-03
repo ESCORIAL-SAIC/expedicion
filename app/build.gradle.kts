@@ -18,8 +18,13 @@ android {
         applicationId = "com.escorial.expedicion"
         minSdk = 26
         targetSdk = 35
+        // Fuente de verdad de la version: el CI la lee, la incrementa segun el label del PR
+        // (breaking/feature/bugfix) y la commitea de vuelta. Formato obligatorio X.Y.Z[-dev]:
+        // en `dev` lleva el sufijo -dev (prerelease), en `main` se promueve a X.Y.Z estable.
+        // El versionCode lo calcula el CI (build-number + major*10000 + minor*100 + patch);
+        // no editarlos a mano.
         versionCode = 1
-        versionName = "1.0"
+        versionName = "0.1.0-dev"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

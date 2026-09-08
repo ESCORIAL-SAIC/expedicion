@@ -242,6 +242,55 @@ class DespachoViewModelTest {
     }
 
     @Test
+    fun `abrirBuscador lista todos los remitos con busqueda vacia y abre el buscador`() = runTest {
+        val candidatos = listOf(
+            remito,
+            remito.copy(remitoN = "R-0002", remitoId = "remito-2", clienteN = "Cliente Dos"),
+        )
+        coEvery { remitoRepository.listarDespacho("") } returns
+            ApiResult.Success(RemitoListResponseDto(exactMatch = null, items = candidatos))
+        val viewModel = DespachoViewModel(remitoRepository, escaneoRepository, soundPlayer)
+
+        viewModel.abrirBuscador()
+
+        val state = viewModel.uiState.value
+        assertTrue(state.mostrarBuscador)
+        assertEquals(candidatos, state.remitosCandidatos)
+        assertNull(state.remitoId)
+        coVerify { remitoRepository.listarDespacho("") }
+    }
+
+    @Test
+    fun `abrirBuscador nunca autoselecciona aunque el API devuelva exactMatch`() = runTest {
+        // La lupa es "quiero elegir de la lista": si el backend devolviera un exactMatch (no deberia
+        // con remitoN vacio, pero es contrato del server, no nuestro), igual tiene que abrir el
+        // listado en vez de saltar directo a un remito que el usuario no eligio.
+        coEvery { remitoRepository.listarDespacho("") } returns
+            ApiResult.Success(RemitoListResponseDto(exactMatch = remito, items = listOf(remito)))
+        val viewModel = DespachoViewModel(remitoRepository, escaneoRepository, soundPlayer)
+
+        viewModel.abrirBuscador()
+
+        val state = viewModel.uiState.value
+        assertTrue(state.mostrarBuscador)
+        assertNull(state.remitoId)
+    }
+
+    @Test
+    fun `abrirBuscador con error del API muestra el mensaje y no abre el buscador`() = runTest {
+        coEvery { remitoRepository.listarDespacho("") } returns
+            ApiResult.Error(message = "Servidor caido", httpStatus = 500)
+        val viewModel = DespachoViewModel(remitoRepository, escaneoRepository, soundPlayer)
+
+        viewModel.abrirBuscador()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.mostrarBuscador)
+        assertEquals("Servidor caido", state.errorMessage)
+        assertFalse(state.isLoading)
+    }
+
+    @Test
     fun `solicitarBorrarTransaccion sin remito seleccionado no muestra el dialogo`() = runTest {
         val viewModel = DespachoViewModel(remitoRepository, escaneoRepository, soundPlayer)
 

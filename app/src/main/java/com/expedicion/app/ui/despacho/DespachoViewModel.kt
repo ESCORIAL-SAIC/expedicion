@@ -77,6 +77,25 @@ class DespachoViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Abre el listado de remitos directamente, sin pasar por la busqueda por numero (la lupa del
+     * campo Remito). Se apoya en que `listarDespacho` siempre devuelve la lista completa y usa
+     * `remitoN` solo para calcular `exactMatch`: con string vacio no hay match y quedan todos los
+     * candidatos, asi que no hace falta un endpoint aparte. A diferencia de [buscarRemito], nunca
+     * autoselecciona: el usuario vino a elegir de la lista.
+     */
+    fun abrirBuscador() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            when (val result = remitoRepository.listarDespacho("")) {
+                is ApiResult.Success -> _uiState.update {
+                    it.copy(isLoading = false, mostrarBuscador = true, remitosCandidatos = result.data.items)
+                }
+                is ApiResult.Error -> _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
+            }
+        }
+    }
+
     fun seleccionarRemito(remito: RemitoListItemDto) {
         _uiState.update {
             it.copy(

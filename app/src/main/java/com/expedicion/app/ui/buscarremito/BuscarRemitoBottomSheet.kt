@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
@@ -27,9 +27,10 @@ import androidx.compose.ui.unit.dp
 import com.expedicion.app.data.remote.dto.RemitoListItemDto
 
 /**
- * Listado buscable de remitos: aparece solo cuando la busqueda por numero exacto no matcheo
- * (RemitoRepository.exactMatch == null). El filtro de texto es 100% client-side sobre la lista
- * ya traida por el endpoint (no vuelve a golpear el API por cada tecla).
+ * Listado buscable de remitos. Se abre por dos caminos: cuando la busqueda por numero exacto no
+ * matcheo (RemitoRepository.exactMatch == null), o cuando el usuario toca la lupa del campo Remito
+ * para ver el listado completo sin tipear nada. El filtro de texto es 100% client-side sobre la
+ * lista ya traida por el endpoint (no vuelve a golpear el API por cada tecla).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,7 +67,11 @@ fun BuscarRemitoBottomSheet(
             }
 
             LazyColumn {
-                items(filtrados, key = { it.remitoId }) { remito ->
+                // La clave lleva el indice porque remitoId NO es unico en esta lista: la query de la
+                // API agrupa por TIPO, asi que un remito con items de varios tipos devuelve una fila
+                // por tipo con el mismo remitoId. Con key = { it.remitoId } Compose crashea
+                // ("Key ... was already used") al listar todo desde la lupa.
+                itemsIndexed(filtrados, key = { index, item -> "${item.remitoId}|${item.tipo}|$index" }) { _, remito ->
                     ListItem(
                         headlineContent = { Text(remito.remitoN) },
                         supportingContent = { Text(remito.clienteN) },

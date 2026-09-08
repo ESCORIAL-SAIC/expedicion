@@ -38,8 +38,13 @@ import com.expedicion.app.util.AppRestarter
  * Pantalla de configuración de la URL base del API.
  *
  * En el primer arranque (sin URL guardada) aparece antes de Login y bloquea la navegación hacia
- * atrás: no se puede seguir sin guardar una URL válida. Desde Login también es accesible en
- * cualquier momento vía el ícono de ajustes para reconfigurarla; ahí sí se puede cancelar y volver.
+ * atrás: no se puede seguir sin guardar una URL válida. También es accesible en cualquier momento
+ * vía el ícono de ajustes, tanto desde Login como desde el Menú ya logueado; ahí sí se puede
+ * cancelar y volver.
+ *
+ * Ojo al entrar desde el Menú: guardar una URL nueva reinicia el proceso (ver [AppRestarter]) y
+ * `SessionManager` sólo vive en memoria, así que se pierde la sesión y hay que volver a loguearse.
+ * Cancelar no reinicia nada y deja la sesión intacta.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

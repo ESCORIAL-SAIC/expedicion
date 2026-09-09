@@ -15,6 +15,8 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.expedicion.app.data.circuito.Circuito
+import com.expedicion.app.ui.circuito.CircuitoScreen
 import com.expedicion.app.ui.config.ApiConfigScreen
 import com.expedicion.app.ui.despacho.DespachoScreen
 import com.expedicion.app.ui.devolucion.DevolucionScreen
@@ -58,6 +60,8 @@ fun ExpedicionNavGraph(
                 onDespacho = { navController.navigate(Routes.DESPACHO) },
                 onDevolucion = { navController.navigate(Routes.DEVOLUCION) },
                 onEstado = { navController.navigate(Routes.ESTADO) },
+                onImportado = { navController.navigate(Routes.IMPORTADO) },
+                onPeabody = { navController.navigate(Routes.PEABODY) },
                 onAbrirConfiguracion = { navController.navigate(Routes.API_CONFIG) },
             )
         }
@@ -69,6 +73,12 @@ fun ExpedicionNavGraph(
         }
         composable(Routes.ESTADO) {
             EstadoScreen(onVolver = { navController.popBackStack() })
+        }
+        composable(Routes.IMPORTADO) {
+            CircuitoScreen(circuito = Circuito.IMPORTADO, onVolver = { navController.popBackStack() })
+        }
+        composable(Routes.PEABODY) {
+            CircuitoScreen(circuito = Circuito.PEABODY, onVolver = { navController.popBackStack() })
         }
     }
 }

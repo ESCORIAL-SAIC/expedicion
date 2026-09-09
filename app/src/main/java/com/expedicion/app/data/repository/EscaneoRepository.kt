@@ -1,6 +1,7 @@
 package com.expedicion.app.data.repository
 
 import com.expedicion.app.data.ApiResult
+import com.expedicion.app.data.circuito.Circuito
 import com.expedicion.app.data.map
 import com.expedicion.app.data.remote.ApiService
 import com.expedicion.app.data.remote.dto.CredencialesRequest
@@ -94,4 +95,45 @@ class EscaneoRepository @Inject constructor(
 
     suspend fun confirmarDevolucion(remitoId: String): ApiResult<Unit> =
         safeApiCall { api.confirmarDevolucion(remitoId, credenciales()) }.map { }
+
+    // Circuitos IMPORT / PEABODY. Mismos DTOs que despacho: el contrato de request/response es
+    // identico, solo cambia la ruta y las validaciones que corren del lado del servidor.
+
+    suspend fun escanearCircuito(
+        circuito: Circuito,
+        remitoId: String,
+        etiqueta: String,
+        remitoN: String,
+    ): ApiResult<ScanOutcome> {
+        val creds = sessionManager.current()
+        val body = EscaneoRequest(
+            usuario = creds?.usuario.orEmpty(),
+            password = creds?.password.orEmpty(),
+            etiqueta = etiqueta,
+            tipo = circuito.tipo,
+            remitoN = remitoN,
+        )
+        return safeApiCall { api.escanearCircuito(circuito.slug, remitoId, body) }.map { it.toOutcome() }
+    }
+
+    suspend fun eliminarEtiquetaCircuito(
+        circuito: Circuito,
+        remitoId: String,
+        etiqueta: String,
+    ): ApiResult<EliminarResponseDto> {
+        val creds = sessionManager.current()
+        val body = EliminarEtiquetaRequest(
+            usuario = creds?.usuario.orEmpty(),
+            password = creds?.password.orEmpty(),
+            etiqueta = etiqueta,
+            tipo = circuito.tipo,
+        )
+        return safeApiCall { api.eliminarEtiquetaCircuito(circuito.slug, remitoId, body) }
+    }
+
+    suspend fun borrarTransaccionCircuito(circuito: Circuito, remitoId: String): ApiResult<Unit> =
+        safeApiCall { api.borrarTransaccionCircuito(circuito.slug, remitoId, credenciales()) }.map { }
+
+    suspend fun confirmarCircuito(circuito: Circuito, remitoId: String): ApiResult<Unit> =
+        safeApiCall { api.confirmarCircuito(circuito.slug, remitoId, credenciales()) }.map { }
 }

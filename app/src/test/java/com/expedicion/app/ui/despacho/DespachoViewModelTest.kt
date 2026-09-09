@@ -317,20 +317,21 @@ class DespachoViewModelTest {
     /**
      * Acceptance criteria (item 5 de la spec de QA) y `UnitFunciones.pas` (`BorrarTransaccion`,
      * linea 841-844: `if es_despacho then FormDespacho.Close`): tras confirmar el borrado
-     * irreversible y que el endpoint responda exito, la pantalla debe cerrarse. La implementacion
-     * actual solo resetea el estado a un `DespachoUiState()` en blanco (remito null, items vacios)
-     * pero nunca marca `cerrarPantalla = true`, por lo que `DespachoScreen` (que solo navega hacia
-     * atras en el `LaunchedEffect(uiState.cerrarPantalla)`) no cierra la pantalla. Este test
-     * documenta el criterio esperado y falla contra la implementacion actual.
+     * irreversible y que el endpoint responda exito, la pantalla debe cerrarse.
+     *
+     * `confirmarBorrarTransaccion` resetea el estado con `DespachoUiState(cerrarPantalla = true)`
+     * (DespachoViewModel.kt:208), asi que el `LaunchedEffect(uiState.cerrarPantalla)` de
+     * `DespachoScreen` navega hacia atras. El reset a estado en blanco es intencional: la pantalla
+     * se abandona sin remito ni items cargados.
      */
     @Test
-    fun `confirmarBorrarTransaccion exitoso deberia cerrar la pantalla`() = runTest {
+    fun `confirmarBorrarTransaccion exitoso cierra la pantalla`() = runTest {
         val viewModel = crearViewModelConRemitoSeleccionado()
         viewModel.solicitarBorrarTransaccion()
         coEvery { escaneoRepository.borrarTransaccion(true, any()) } returns ApiResult.Success(Unit)
 
         viewModel.confirmarBorrarTransaccion()
 
-        assertTrue("BUG: confirmarBorrarTransaccion exitoso no marca cerrarPantalla=true", viewModel.uiState.value.cerrarPantalla)
+        assertTrue(viewModel.uiState.value.cerrarPantalla)
     }
 }

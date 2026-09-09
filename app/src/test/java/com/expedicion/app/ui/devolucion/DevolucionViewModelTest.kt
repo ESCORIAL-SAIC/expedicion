@@ -171,18 +171,18 @@ class DevolucionViewModelTest {
     }
 
     /**
-     * Mismo hallazgo que en Despacho (ver DespachoViewModelTest): `UnitFunciones.pas`
-     * `BorrarTransaccion` cierra `FormDevolucion` tras el borrado exitoso; la implementacion
-     * actual solo resetea el estado a `DevolucionUiState()` sin marcar `cerrarPantalla = true`.
+     * Igual que en Despacho (ver DespachoViewModelTest): `UnitFunciones.pas` `BorrarTransaccion`
+     * cierra `FormDevolucion` tras el borrado exitoso, y `confirmarBorrarTransaccion` lo replica
+     * reseteando con `DevolucionUiState(cerrarPantalla = true)` (DevolucionViewModel.kt:170).
      */
     @Test
-    fun `confirmarBorrarTransaccion exitoso deberia cerrar la pantalla`() = runTest {
+    fun `confirmarBorrarTransaccion exitoso cierra la pantalla`() = runTest {
         val viewModel = crearViewModelConRemitoSeleccionado()
         viewModel.solicitarBorrarTransaccion()
         coEvery { escaneoRepository.borrarTransaccion(false, any()) } returns ApiResult.Success(Unit)
 
         viewModel.confirmarBorrarTransaccion()
 
-        assertTrue("BUG: confirmarBorrarTransaccion exitoso no marca cerrarPantalla=true", viewModel.uiState.value.cerrarPantalla)
+        assertTrue(viewModel.uiState.value.cerrarPantalla)
     }
 }

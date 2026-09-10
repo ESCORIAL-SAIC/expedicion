@@ -217,6 +217,20 @@ fun DespachoScreen(
                 ) { Text("Borrar transacción") }
             }
 
+            // Aclaracion necesaria en los remitos partidos por tipo: se entra por un tipo, pero
+            // esta lista trae los items de TODO el remito. No se puede filtrar por tipo -- ni la
+            // vista de transaccion ni productosValidos traen el tipo, solo el producto -- asi que
+            // al menos se dice, para que ver termotanques habiendo entrado por COCINA no parezca
+            // un error. El "Tipo" de la tarjeta de arriba es el que gobierna el escaneo.
+            if (uiState.tipo.isNotBlank()) {
+                Text(
+                    "Items del remito completo",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
+
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(uiState.items, key = { it.itemRemitoId ?: it.productoN }) { item ->
                     ListItem(

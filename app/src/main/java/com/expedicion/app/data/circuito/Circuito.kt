@@ -18,5 +18,18 @@ enum class Circuito(
     val titulo: String,
 ) {
     IMPORTADO(slug = "importado", tipo = "IMPORT", titulo = "Importados"),
-    PEABODY(slug = "peabody", tipo = "PEABODY", titulo = "Peabody"),
+    PEABODY(slug = "peabody", tipo = "PEABODY", titulo = "Peabody");
+
+    companion object {
+        /**
+         * Circuito que corresponde al TIPO de un remito, o `null` si va por el despacho clasico
+         * (COCINA / TERMOTANQUE, y cualquier tipo nuevo que aparezca sin circuito propio).
+         *
+         * Esta resolucion es lo que permite que el operario entre siempre por Despacho, elija el
+         * remito y la app decida sola contra que endpoint hablar: el tipo ya viene en la fila del
+         * listado, asi que no hace falta que elija el circuito de antemano.
+         */
+        fun fromTipo(tipo: String): Circuito? =
+            entries.firstOrNull { it.tipo.equals(tipo, ignoreCase = true) }
+    }
 }

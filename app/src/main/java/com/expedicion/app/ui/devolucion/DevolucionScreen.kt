@@ -147,7 +147,7 @@ fun DevolucionScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = ExpGreen),
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.weight(1f).height(48.dp),
-                ) { Text("Nuevo") }
+                ) { Text("Agregar") }
                 OutlinedButton(
                     onClick = { mostrarDialogoEliminar = true },
                     enabled = uiState.tieneRemitoSeleccionado,

@@ -144,6 +144,16 @@ fun DespachoScreen(
                 Column(Modifier.padding(12.dp)) {
                     Text("Cliente", style = MaterialTheme.typography.labelMedium)
                     Text(uiState.clienteN, style = MaterialTheme.typography.titleMedium)
+                    // Con un remito partido por tipo hay que poder ver cual de esos pedazos se esta
+                    // despachando: el mismo numero de remito puede estar abierto como TERMOTANQUE o
+                    // como IMPORT y el listado de productos cambia.
+                    if (uiState.tipo.isNotBlank()) {
+                        Text(
+                            "Tipo: ${uiState.tipo}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Spacer(Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),

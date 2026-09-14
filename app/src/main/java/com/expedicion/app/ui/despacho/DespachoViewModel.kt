@@ -3,6 +3,7 @@ package com.expedicion.app.ui.despacho
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.expedicion.app.data.ApiResult
+import com.expedicion.app.data.circuito.Circuito
 import com.expedicion.app.data.isServerFault
 import com.expedicion.app.data.remote.dto.RemitoListItemDto
 import com.expedicion.app.data.repository.EscaneoRepository
@@ -77,6 +78,25 @@ class DespachoViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Abre el listado de remitos directamente, sin pasar por la busqueda por numero (la lupa del
+     * campo Remito). Se apoya en que `listarDespacho` siempre devuelve la lista completa y usa
+     * `remitoN` solo para calcular `exactMatch`: con string vacio no hay match y quedan todos los
+     * candidatos, asi que no hace falta un endpoint aparte. A diferencia de [buscarRemito], nunca
+     * autoselecciona: el usuario vino a elegir de la lista.
+     */
+    fun abrirBuscador() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            when (val result = remitoRepository.listarDespacho("")) {
+                is ApiResult.Success -> _uiState.update {
+                    it.copy(isLoading = false, mostrarBuscador = true, remitosCandidatos = result.data.items)
+                }
+                is ApiResult.Error -> _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
+            }
+        }
+    }
+
     fun seleccionarRemito(remito: RemitoListItemDto) {
         _uiState.update {
             it.copy(
@@ -93,10 +113,16 @@ class DespachoViewModel @Inject constructor(
         cargarDetalle()
     }
 
+    /**
+     * Trae los items del pedazo del remito que corresponde al tipo elegido. Un remito puede tener
+     * productos de varios tipos y cada fila del listado es uno de esos pedazos, asi que entrar por
+     * COCINA tiene que mostrar solo las cocinas.
+     */
     private fun cargarDetalle() {
         val remitoId = _uiState.value.remitoId ?: return
+        val tipo = _uiState.value.tipo
         viewModelScope.launch {
-            when (val result = remitoRepository.detalle(remitoId, esDespacho = true)) {
+            when (val result = remitoRepository.detalle(remitoId, esDespacho = true, tipo = tipo)) {
                 is ApiResult.Success -> _uiState.update {
                     it.copy(isLoading = false, items = result.data.items, totalEscaneado = result.data.totalEscaneado)
                 }
@@ -108,9 +134,18 @@ class DespachoViewModel @Inject constructor(
     fun escanear() {
         val state = _uiState.value
         val remitoId = state.remitoId ?: return
+        val circuito = Circuito.fromTipo(state.tipo)
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            when (val result = escaneoRepository.escanear(true, remitoId, state.etiquetaInput, state.tipo, state.remitoN)) {
+            // El TIPO del remito decide el circuito: IMPORT y PEABODY tienen endpoints propios con
+            // otras validaciones (ver modules/circuitos/config.ts en la API); el resto va por el
+            // despacho clasico.
+            val result = if (circuito != null) {
+                escaneoRepository.escanearCircuito(circuito, remitoId, state.etiquetaInput, state.remitoN)
+            } else {
+                escaneoRepository.escanear(true, remitoId, state.etiquetaInput, state.tipo, state.remitoN)
+            }
+            when (result) {
                 is ApiResult.Success -> when (val outcome = result.data) {
                     is ScanOutcome.Duplicated -> {
                         // Abort silencioso: sin dialogo, sin sonido, solo limpia el campo y devuelve foco.
@@ -121,7 +156,15 @@ class DespachoViewModel @Inject constructor(
                     is ScanOutcome.Success -> {
                         soundPlayer.playSuccess()
                         _uiState.update {
-                            val nuevoContador = if (it.contador >= CONTADOR_MAX) 1 else it.contador + 1
+                            // El contador cuenta bultos de la linea propia: no aplica a importados
+                            // ni Peabody, asi que en esos circuitos queda quieto.
+                            val nuevoContador = if (circuito != null) {
+                                it.contador
+                            } else if (it.contador >= CONTADOR_MAX) {
+                                1
+                            } else {
+                                it.contador + 1
+                            }
                             it.copy(
                                 isLoading = false,
                                 etiquetaInput = "",
@@ -160,14 +203,26 @@ class DespachoViewModel @Inject constructor(
     fun eliminarEtiqueta(etiqueta: String) {
         val remitoId = _uiState.value.remitoId ?: return
         val tipo = _uiState.value.tipo
+        val circuito = Circuito.fromTipo(tipo)
         if (etiqueta.isBlank()) return
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            when (val result = escaneoRepository.eliminarEtiqueta(true, remitoId, etiqueta, tipo)) {
+            val result = if (circuito != null) {
+                escaneoRepository.eliminarEtiquetaCircuito(circuito, remitoId, etiqueta)
+            } else {
+                escaneoRepository.eliminarEtiqueta(true, remitoId, etiqueta, tipo)
+            }
+            when (result) {
                 is ApiResult.Success -> {
                     soundPlayer.playSuccess()
                     _uiState.update {
-                        val nuevoContador = if (it.contador <= 0) 0 else it.contador - 1
+                        val nuevoContador = if (circuito != null) {
+                            it.contador
+                        } else if (it.contador <= 0) {
+                            0
+                        } else {
+                            it.contador - 1
+                        }
                         it.copy(isLoading = false, totalEscaneado = result.data.totalEscaneado, contador = nuevoContador)
                     }
                     cargarDetalle()
@@ -182,10 +237,16 @@ class DespachoViewModel @Inject constructor(
 
     fun confirmarBorrarTransaccion() {
         val remitoId = _uiState.value.remitoId ?: return
+        val circuito = Circuito.fromTipo(_uiState.value.tipo)
         _uiState.update { it.copy(mostrarConfirmarBorrarTransaccion = false) }
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            when (val result = escaneoRepository.borrarTransaccion(true, remitoId)) {
+            val result = if (circuito != null) {
+                escaneoRepository.borrarTransaccionCircuito(circuito, remitoId)
+            } else {
+                escaneoRepository.borrarTransaccion(true, remitoId)
+            }
+            when (result) {
                 is ApiResult.Success -> _uiState.update { DespachoUiState(cerrarPantalla = true) }
                 is ApiResult.Error -> _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
             }
@@ -198,9 +259,15 @@ class DespachoViewModel @Inject constructor(
      */
     fun confirmar() {
         val remitoId = _uiState.value.remitoId ?: return
+        val circuito = Circuito.fromTipo(_uiState.value.tipo)
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            when (val result = escaneoRepository.confirmarDespacho(remitoId)) {
+            val result = if (circuito != null) {
+                escaneoRepository.confirmarCircuito(circuito, remitoId)
+            } else {
+                escaneoRepository.confirmarDespacho(remitoId)
+            }
+            when (result) {
                 is ApiResult.Success -> _uiState.update { it.copy(isLoading = false, cerrarPantalla = true) }
                 is ApiResult.Error -> _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
             }

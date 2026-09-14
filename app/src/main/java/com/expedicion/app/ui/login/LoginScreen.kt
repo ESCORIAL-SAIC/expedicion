@@ -4,11 +4,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -71,25 +74,19 @@ fun LoginScreen(
         )
     }
 
+    // El fondo azul se pinta a pantalla completa (la Activity es edge-to-edge), pero los hijos del
+    // Box se corren hacia adentro de las barras del sistema con windowInsetsPadding: sin eso el
+    // boton de configuracion queda tapado por la barra de notificaciones. Esta pantalla no usa
+    // ExpScaffold, que es quien aplica los insets en el resto de la app.
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(ExpBlue),
     ) {
-        IconButton(
-            onClick = onAbrirConfiguracion,
-            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-        ) {
-            Icon(
-                Icons.Filled.Settings,
-                contentDescription = "Configuración del servidor",
-                tint = MaterialTheme.colorScheme.onPrimary,
-            )
-        }
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
@@ -176,6 +173,23 @@ fun LoginScreen(
                 ),
                 color = MaterialTheme.colorScheme.onPrimary,
                 style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
+        // Va declarado DESPUES del Column a proposito: el Column ocupa toda la pantalla y, en un
+        // Box, el orden de declaracion es orden de dibujado y de hit-testing. Si el boton se
+        // declara antes, el Column queda encima y se come el tap: el icono se ve pero no responde.
+        IconButton(
+            onClick = onAbrirConfiguracion,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(8.dp),
+        ) {
+            Icon(
+                Icons.Filled.Settings,
+                contentDescription = "Configuración del servidor",
+                tint = MaterialTheme.colorScheme.onPrimary,
             )
         }
     }

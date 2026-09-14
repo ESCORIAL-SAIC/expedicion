@@ -58,6 +58,7 @@ fun ExpedicionNavGraph(
                 onDespacho = { navController.navigate(Routes.DESPACHO) },
                 onDevolucion = { navController.navigate(Routes.DEVOLUCION) },
                 onEstado = { navController.navigate(Routes.ESTADO) },
+                onAbrirConfiguracion = { navController.navigate(Routes.API_CONFIG) },
             )
         }
         composable(Routes.DESPACHO) {

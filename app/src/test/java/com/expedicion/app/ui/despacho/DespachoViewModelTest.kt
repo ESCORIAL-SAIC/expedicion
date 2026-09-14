@@ -2,6 +2,7 @@ package com.expedicion.app.ui.despacho
 
 import com.expedicion.app.MainDispatcherRule
 import com.expedicion.app.data.ApiResult
+import com.expedicion.app.data.circuito.Circuito
 import com.expedicion.app.data.remote.dto.DetalleRemitoResponseDto
 import com.expedicion.app.data.remote.dto.EliminarResponseDto
 import com.expedicion.app.data.remote.dto.RemitoListItemDto
@@ -242,6 +243,55 @@ class DespachoViewModelTest {
     }
 
     @Test
+    fun `abrirBuscador lista todos los remitos con busqueda vacia y abre el buscador`() = runTest {
+        val candidatos = listOf(
+            remito,
+            remito.copy(remitoN = "R-0002", remitoId = "remito-2", clienteN = "Cliente Dos"),
+        )
+        coEvery { remitoRepository.listarDespacho("") } returns
+            ApiResult.Success(RemitoListResponseDto(exactMatch = null, items = candidatos))
+        val viewModel = DespachoViewModel(remitoRepository, escaneoRepository, soundPlayer)
+
+        viewModel.abrirBuscador()
+
+        val state = viewModel.uiState.value
+        assertTrue(state.mostrarBuscador)
+        assertEquals(candidatos, state.remitosCandidatos)
+        assertNull(state.remitoId)
+        coVerify { remitoRepository.listarDespacho("") }
+    }
+
+    @Test
+    fun `abrirBuscador nunca autoselecciona aunque el API devuelva exactMatch`() = runTest {
+        // La lupa es "quiero elegir de la lista": si el backend devolviera un exactMatch (no deberia
+        // con remitoN vacio, pero es contrato del server, no nuestro), igual tiene que abrir el
+        // listado en vez de saltar directo a un remito que el usuario no eligio.
+        coEvery { remitoRepository.listarDespacho("") } returns
+            ApiResult.Success(RemitoListResponseDto(exactMatch = remito, items = listOf(remito)))
+        val viewModel = DespachoViewModel(remitoRepository, escaneoRepository, soundPlayer)
+
+        viewModel.abrirBuscador()
+
+        val state = viewModel.uiState.value
+        assertTrue(state.mostrarBuscador)
+        assertNull(state.remitoId)
+    }
+
+    @Test
+    fun `abrirBuscador con error del API muestra el mensaje y no abre el buscador`() = runTest {
+        coEvery { remitoRepository.listarDespacho("") } returns
+            ApiResult.Error(message = "Servidor caido", httpStatus = 500)
+        val viewModel = DespachoViewModel(remitoRepository, escaneoRepository, soundPlayer)
+
+        viewModel.abrirBuscador()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.mostrarBuscador)
+        assertEquals("Servidor caido", state.errorMessage)
+        assertFalse(state.isLoading)
+    }
+
+    @Test
     fun `solicitarBorrarTransaccion sin remito seleccionado no muestra el dialogo`() = runTest {
         val viewModel = DespachoViewModel(remitoRepository, escaneoRepository, soundPlayer)
 
@@ -268,20 +318,128 @@ class DespachoViewModelTest {
     /**
      * Acceptance criteria (item 5 de la spec de QA) y `UnitFunciones.pas` (`BorrarTransaccion`,
      * linea 841-844: `if es_despacho then FormDespacho.Close`): tras confirmar el borrado
-     * irreversible y que el endpoint responda exito, la pantalla debe cerrarse. La implementacion
-     * actual solo resetea el estado a un `DespachoUiState()` en blanco (remito null, items vacios)
-     * pero nunca marca `cerrarPantalla = true`, por lo que `DespachoScreen` (que solo navega hacia
-     * atras en el `LaunchedEffect(uiState.cerrarPantalla)`) no cierra la pantalla. Este test
-     * documenta el criterio esperado y falla contra la implementacion actual.
+     * irreversible y que el endpoint responda exito, la pantalla debe cerrarse.
+     *
+     * `confirmarBorrarTransaccion` resetea el estado con `DespachoUiState(cerrarPantalla = true)`
+     * (DespachoViewModel.kt:208), asi que el `LaunchedEffect(uiState.cerrarPantalla)` de
+     * `DespachoScreen` navega hacia atras. El reset a estado en blanco es intencional: la pantalla
+     * se abandona sin remito ni items cargados.
      */
     @Test
-    fun `confirmarBorrarTransaccion exitoso deberia cerrar la pantalla`() = runTest {
+    fun `confirmarBorrarTransaccion exitoso cierra la pantalla`() = runTest {
         val viewModel = crearViewModelConRemitoSeleccionado()
         viewModel.solicitarBorrarTransaccion()
         coEvery { escaneoRepository.borrarTransaccion(true, any()) } returns ApiResult.Success(Unit)
 
         viewModel.confirmarBorrarTransaccion()
 
-        assertTrue("BUG: confirmarBorrarTransaccion exitoso no marca cerrarPantalla=true", viewModel.uiState.value.cerrarPantalla)
+        assertTrue(viewModel.uiState.value.cerrarPantalla)
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Enrutamiento por TIPO: el operario entra siempre por Despacho y la app decide el circuito
+    // segun el tipo del remito elegido, sin que tenga que saber por donde entrar.
+    // ---------------------------------------------------------------------------------------
+
+    private fun remitoDeTipo(tipo: String) = remito.copy(tipo = tipo)
+
+    private fun crearViewModelConTipo(tipo: String): DespachoViewModel {
+        coEvery { remitoRepository.detalle(any(), any()) } returns
+            ApiResult.Success(DetalleRemitoResponseDto(items = emptyList(), totalEscaneado = 0))
+        val viewModel = DespachoViewModel(remitoRepository, escaneoRepository, soundPlayer)
+        viewModel.seleccionarRemito(remitoDeTipo(tipo))
+        return viewModel
+    }
+
+    @Test
+    fun `remito PEABODY escanea por el circuito peabody`() = runTest {
+        val viewModel = crearViewModelConTipo("PEABODY")
+        coEvery { escaneoRepository.escanearCircuito(any(), any(), any(), any()) } returns
+            ApiResult.Success(ScanOutcome.Success("Cafetera", 1, 2, 1))
+
+        viewModel.onEtiquetaChange("7791234567890")
+        viewModel.escanear()
+
+        coVerify {
+            escaneoRepository.escanearCircuito(Circuito.PEABODY, "remito-1", "7791234567890", "R-0001")
+        }
+        coVerify(exactly = 0) { escaneoRepository.escanear(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `remito IMPORT escanea por el circuito importado`() = runTest {
+        val viewModel = crearViewModelConTipo("IMPORT")
+        coEvery { escaneoRepository.escanearCircuito(any(), any(), any(), any()) } returns
+            ApiResult.Success(ScanOutcome.Success("Anafe", 1, 1, 1))
+
+        viewModel.onEtiquetaChange("12345")
+        viewModel.escanear()
+
+        coVerify { escaneoRepository.escanearCircuito(Circuito.IMPORTADO, "remito-1", "12345", "R-0001") }
+    }
+
+    @Test
+    fun `remito COCINA sigue escaneando por el despacho clasico`() = runTest {
+        val viewModel = crearViewModelConTipo("COCINA")
+        coEvery { escaneoRepository.escanear(true, any(), any(), any(), any()) } returns
+            ApiResult.Success(ScanOutcome.Success("Cocina X", 1, 1, 1))
+
+        viewModel.onEtiquetaChange("100001")
+        viewModel.escanear()
+
+        coVerify { escaneoRepository.escanear(true, "remito-1", "100001", "COCINA", "R-0001") }
+        coVerify(exactly = 0) { escaneoRepository.escanearCircuito(any(), any(), any(), any()) }
+    }
+
+    // Un tipo que todavia no tiene circuito propio no debe romper: cae al despacho clasico.
+    @Test
+    fun `un tipo desconocido cae al despacho clasico`() = runTest {
+        val viewModel = crearViewModelConTipo("TIPO_NUEVO")
+        coEvery { escaneoRepository.escanear(true, any(), any(), any(), any()) } returns
+            ApiResult.Success(ScanOutcome.Success("Producto", 1, 1, 1))
+
+        viewModel.onEtiquetaChange("999")
+        viewModel.escanear()
+
+        coVerify { escaneoRepository.escanear(true, "remito-1", "999", "TIPO_NUEVO", "R-0001") }
+    }
+
+    // El contador cuenta bultos de la linea propia: no debe avanzar en importados ni Peabody.
+    @Test
+    fun `el contador no avanza en los circuitos nuevos`() = runTest {
+        val viewModel = crearViewModelConTipo("PEABODY")
+        coEvery { escaneoRepository.escanearCircuito(any(), any(), any(), any()) } returns
+            ApiResult.Success(ScanOutcome.Success("Cafetera", 1, 2, 1))
+
+        repeat(3) { viewModel.escanear() }
+
+        assertEquals(0, viewModel.uiState.value.contador)
+    }
+
+    @Test
+    fun `confirmar y borrar transaccion tambien enrutan por tipo`() = runTest {
+        val viewModel = crearViewModelConTipo("PEABODY")
+        coEvery { escaneoRepository.confirmarCircuito(any(), any()) } returns ApiResult.Success(Unit)
+        coEvery { escaneoRepository.borrarTransaccionCircuito(any(), any()) } returns ApiResult.Success(Unit)
+
+        viewModel.confirmar()
+        coVerify { escaneoRepository.confirmarCircuito(Circuito.PEABODY, "remito-1") }
+        coVerify(exactly = 0) { escaneoRepository.confirmarDespacho(any()) }
+
+        viewModel.solicitarBorrarTransaccion()
+        viewModel.confirmarBorrarTransaccion()
+        coVerify { escaneoRepository.borrarTransaccionCircuito(Circuito.PEABODY, "remito-1") }
+    }
+
+    @Test
+    fun `eliminar etiqueta enruta por tipo`() = runTest {
+        val viewModel = crearViewModelConTipo("IMPORT")
+        coEvery { escaneoRepository.eliminarEtiquetaCircuito(any(), any(), any()) } returns
+            ApiResult.Success(EliminarResponseDto(success = true, totalEscaneado = 0))
+
+        viewModel.eliminarEtiqueta("12345")
+
+        coVerify { escaneoRepository.eliminarEtiquetaCircuito(Circuito.IMPORTADO, "remito-1", "12345") }
+        coVerify(exactly = 0) { escaneoRepository.eliminarEtiqueta(any(), any(), any(), any()) }
     }
 }

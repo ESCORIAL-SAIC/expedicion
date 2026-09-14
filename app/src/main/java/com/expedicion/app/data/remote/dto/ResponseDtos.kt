@@ -15,7 +15,18 @@ data class RemitoListItemDto(
     val clienteId: String,
     val tipo: String,
     val consignacion: Boolean? = null,
-)
+    val cantidadEscaneada: Int = 0,
+    val cantidadPedida: Int = 0,
+) {
+    /**
+     * Remito ya cargado por completo. Sigue apareciendo en el listado porque la vista solo filtra
+     * por PERMITE_DESPACHO, que lo maneja el ERP y no baja al terminar de escanear, asi que la
+     * app lo marca y lo manda al final para que no estorbe.
+     *
+     * `cantidadPedida == 0` es un remito sin items o sin avance conocido: no cuenta como completo.
+     */
+    val completo: Boolean get() = cantidadPedida > 0 && cantidadEscaneada >= cantidadPedida
+}
 
 @Serializable
 data class RemitoListResponseDto(

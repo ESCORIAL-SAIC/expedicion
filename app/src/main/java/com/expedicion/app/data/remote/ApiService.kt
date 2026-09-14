@@ -41,10 +41,13 @@ interface ApiService {
     @GET("remitos/devolucion")
     suspend fun listarRemitosDevolucion(@Query("remitoN") remitoN: String): Response<RemitoListResponseDto>
 
+    // `tipo` acota los items a los productos de ese tipo dentro del remito; vacio trae el remito
+    // completo.
     @GET("remitos/{remitoId}/detalle")
     suspend fun detalleRemito(
         @Path("remitoId") remitoId: String,
         @Query("esDespacho") esDespacho: Boolean,
+        @Query("tipo") tipo: String = "",
     ): Response<DetalleRemitoResponseDto>
 
     @POST("despacho/{remitoId}/escaneo")
@@ -97,4 +100,42 @@ interface ApiService {
 
     @POST("etiquetas/estado")
     suspend fun consultarEstado(@Body body: EstadoRequest): Response<EstadoResponseDto>
+
+    // Circuitos IMPORT / PEABODY. El slug va como @Path y no interpolado en la anotacion porque
+    // Retrofit exige que el path sea una constante de compilacion; el servidor registra los dos
+    // slugs como literales (ver api/src/http/routes/circuitos.ts), asi que un slug desconocido
+    // da 404 y no cae en ningun catch-all.
+    @GET("remitos/{circuito}")
+    suspend fun listarRemitosCircuito(
+        @Path("circuito") circuito: String,
+        @Query("remitoN") remitoN: String,
+    ): Response<RemitoListResponseDto>
+
+    @POST("{circuito}/{remitoId}/escaneo")
+    suspend fun escanearCircuito(
+        @Path("circuito") circuito: String,
+        @Path("remitoId") remitoId: String,
+        @Body body: EscaneoRequest,
+    ): Response<ScanResponseDto>
+
+    @HTTP(method = "DELETE", path = "{circuito}/{remitoId}/etiqueta", hasBody = true)
+    suspend fun eliminarEtiquetaCircuito(
+        @Path("circuito") circuito: String,
+        @Path("remitoId") remitoId: String,
+        @Body body: EliminarEtiquetaRequest,
+    ): Response<EliminarResponseDto>
+
+    @HTTP(method = "DELETE", path = "{circuito}/{remitoId}/transaccion", hasBody = true)
+    suspend fun borrarTransaccionCircuito(
+        @Path("circuito") circuito: String,
+        @Path("remitoId") remitoId: String,
+        @Body body: CredencialesRequest,
+    ): Response<SuccessResponseDto>
+
+    @POST("{circuito}/{remitoId}/confirmar")
+    suspend fun confirmarCircuito(
+        @Path("circuito") circuito: String,
+        @Path("remitoId") remitoId: String,
+        @Body body: CredencialesRequest,
+    ): Response<SuccessResponseDto>
 }

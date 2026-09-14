@@ -133,10 +133,11 @@ jobs:
           $releaseType = $env:RELEASE_TYPE
           if (-not $releaseType) { $releaseType = "bugfix" }
 
-          # Validar formato esperado X.Y.Z[-dev] antes de parsear
-          $base = $versionName -replace '-dev',''
+          # Se acepta -rc.N (formato actual) y -dev (el anterior, para no romper si quedo alguno
+          # dando vueltas). Lo que se parsea es siempre el X.Y.Z de base.
+          $base = $versionName -replace '-rc\.\d+$','' -replace '-rc$','' -replace '-dev$',''
           if ($base -notmatch '^\d+\.\d+\.\d+$') {
-            Write-Error "❌ versionName '$versionName' no tiene el formato esperado X.Y.Z[-dev]"
+            Write-Error "❌ versionName '$versionName' no tiene el formato esperado X.Y.Z[-rc.N]"
             exit 1
           }
 
@@ -151,7 +152,22 @@ jobs:
               "breaking" { $major += 1; $minor = 0; $patch = 0 }
           }
 
-          $newVersionName = "$major.$minor.$patch-dev"
+          # Los prereleases se numeran como en expedicion-api: 0.2.0-rc.1, rc.2, ... Se cuenta
+          # sobre los TAGS existentes y no sobre el versionName, porque dos merges seguidos pueden
+          # calcular el mismo X.Y.Z y el tag chocaria al pushear.
+          $core = "$major.$minor.$patch"
+          git fetch --tags --quiet
+          $rcTags = git tag --list "$core-rc.*"
+          $ultimoRc = 0
+          foreach ($t in $rcTags) {
+            if ($t -match "^$([regex]::Escape($core))-rc\.(\d+)$") {
+              $n = [int]$matches[1]
+              if ($n -gt $ultimoRc) { $ultimoRc = $n }
+            }
+          }
+          $rc = $ultimoRc + 1
+
+          $newVersionName = "$core-rc.$rc"
           $runNumber = [int]$env:BUILD_NUMBER
           $newVersionCode = $runNumber + ($major * 10000) + ($minor * 100) + $patch
 

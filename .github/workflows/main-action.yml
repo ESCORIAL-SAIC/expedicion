@@ -118,11 +118,12 @@ jobs:
             exit 1
           }
 
-          # Promover a versión estable: quitar el sufijo -dev (X.Y.Z-dev -> X.Y.Z)
-          $stableVersion = $versionName -replace '-dev',''
+          # Promover a versión estable: quitar el sufijo de prerelease (X.Y.Z-rc.N -> X.Y.Z).
+          # Se acepta -dev por compatibilidad con el formato anterior.
+          $stableVersion = $versionName -replace '-rc\.\d+$','' -replace '-rc$','' -replace '-dev$',''
           # Validar formato esperado X.Y.Z antes de parsear
           if ($stableVersion -notmatch '^\d+\.\d+\.\d+$') {
-            Write-Error "❌ versionName '$versionName' no tiene el formato esperado X.Y.Z[-dev]"
+            Write-Error "❌ versionName '$versionName' no tiene el formato esperado X.Y.Z[-rc.N]"
             exit 1
           }
           $parts = $stableVersion -split '\.'
@@ -193,8 +194,8 @@ jobs:
           #
           # NOTA (H2): este commit-back de la versión estable a main provoca que, en el
           # próximo PR dev -> main, haya conflicto de merge en versionName/versionCode
-          # (main tiene X.Y.Z sin -dev; dev tiene X.Y.Z-dev). Al resolver ese PR se debe
-          # elegir SIEMPRE la versión de dev (X.Y.Z-dev); este workflow la re-promueve.
+          # (main tiene X.Y.Z sin sufijo; dev tiene X.Y.Z-rc.N). Al resolver ese PR se debe
+          # elegir SIEMPRE la versión de dev (X.Y.Z-rc.N); este workflow la re-promueve.
           $gradleFile = "app/build.gradle.kts"
           $stableVersion = "${{ env.version }}"
 

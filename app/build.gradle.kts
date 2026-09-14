@@ -23,8 +23,8 @@ android {
         // en `dev` lleva el sufijo -dev (prerelease), en `main` se promueve a X.Y.Z estable.
         // El versionCode lo calcula el CI (build-number + major*10000 + minor*100 + patch);
         // no editarlos a mano.
-        versionCode = 1
-        versionName = "0.1.0-dev"
+        versionCode = 10203
+        versionName = "0.2.0-rc.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -95,3 +95,4 @@ dependencies {
     // Servidor HTTP local para ejercitar ApiProbe contra respuestas reales (no mockeadas).
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
+

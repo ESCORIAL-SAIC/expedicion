@@ -17,8 +17,12 @@ class RemitoRepository @Inject constructor(
     suspend fun listarDevolucion(remitoN: String): ApiResult<RemitoListResponseDto> =
         safeApiCall { api.listarRemitosDevolucion(remitoN) }
 
-    suspend fun detalle(remitoId: String, esDespacho: Boolean): ApiResult<DetalleRemitoResponseDto> =
-        safeApiCall { api.detalleRemito(remitoId, esDespacho) }
+    suspend fun detalle(
+        remitoId: String,
+        esDespacho: Boolean,
+        tipo: String = "",
+    ): ApiResult<DetalleRemitoResponseDto> =
+        safeApiCall { api.detalleRemito(remitoId, esDespacho, tipo) }
 
     /**
      * Listado de remitos de un circuito nuevo (IMPORT / PEABODY). El detalle se sigue pidiendo con

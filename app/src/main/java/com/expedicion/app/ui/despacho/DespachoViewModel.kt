@@ -113,10 +113,16 @@ class DespachoViewModel @Inject constructor(
         cargarDetalle()
     }
 
+    /**
+     * Trae los items del pedazo del remito que corresponde al tipo elegido. Un remito puede tener
+     * productos de varios tipos y cada fila del listado es uno de esos pedazos, asi que entrar por
+     * COCINA tiene que mostrar solo las cocinas.
+     */
     private fun cargarDetalle() {
         val remitoId = _uiState.value.remitoId ?: return
+        val tipo = _uiState.value.tipo
         viewModelScope.launch {
-            when (val result = remitoRepository.detalle(remitoId, esDespacho = true)) {
+            when (val result = remitoRepository.detalle(remitoId, esDespacho = true, tipo = tipo)) {
                 is ApiResult.Success -> _uiState.update {
                     it.copy(isLoading = false, items = result.data.items, totalEscaneado = result.data.totalEscaneado)
                 }

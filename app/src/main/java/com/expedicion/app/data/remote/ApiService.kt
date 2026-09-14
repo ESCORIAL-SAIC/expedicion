@@ -41,10 +41,13 @@ interface ApiService {
     @GET("remitos/devolucion")
     suspend fun listarRemitosDevolucion(@Query("remitoN") remitoN: String): Response<RemitoListResponseDto>
 
+    // `tipo` acota los items a los productos de ese tipo dentro del remito; vacio trae el remito
+    // completo.
     @GET("remitos/{remitoId}/detalle")
     suspend fun detalleRemito(
         @Path("remitoId") remitoId: String,
         @Query("esDespacho") esDespacho: Boolean,
+        @Query("tipo") tipo: String = "",
     ): Response<DetalleRemitoResponseDto>
 
     @POST("despacho/{remitoId}/escaneo")
